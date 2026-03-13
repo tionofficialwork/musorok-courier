@@ -7,15 +7,18 @@ import {
   TouchableOpacity,
   Linking
 } from "react-native"
+import MapView, { Marker } from "react-native-maps"
 import { useLocalSearchParams } from "expo-router"
 
 import { getOrderById, updateOrderStatus } from "../../lib/orders"
+import { geocodeAddress } from "../../lib/geocode"
 import { Order } from "../../types/order"
 
 export default function OrderScreen() {
   const { id } = useLocalSearchParams()
 
   const [order, setOrder] = useState<Order | null>(null)
+  const [coords, setCoords] = useState<any>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -25,7 +28,12 @@ export default function OrderScreen() {
   async function loadOrder() {
     try {
       const data = await getOrderById(id as string)
+
       setOrder(data)
+
+      const geo = await geocodeAddress(data.address)
+
+      setCoords(geo)
     } catch (e) {
       console.error(e)
     } finally {
@@ -61,7 +69,7 @@ export default function OrderScreen() {
     })
   }
 
-  if (loading) {
+  if (loading || !coords) {
     return (
       <View style={styles.center}>
         <ActivityIndicator />
@@ -81,6 +89,18 @@ export default function OrderScreen() {
     <View style={styles.container}>
       <Text style={styles.title}>Заказ</Text>
 
+      <MapView
+        style={styles.map}
+        initialRegion={{
+          latitude: coords.latitude,
+          longitude: coords.longitude,
+          latitudeDelta: 0.01,
+          longitudeDelta: 0.01
+        }}
+      >
+        <Marker coordinate={coords} />
+      </MapView>
+
       <View style={styles.card}>
         <Text style={styles.label}>Адрес</Text>
         <Text style={styles.value}>{order.address}</Text>
@@ -90,9 +110,6 @@ export default function OrderScreen() {
 
         <Text style={styles.label}>Цена</Text>
         <Text style={styles.value}>{order.total} ₽</Text>
-
-        <Text style={styles.label}>Статус</Text>
-        <Text style={styles.value}>{order.status}</Text>
       </View>
 
       <TouchableOpacity style={styles.mapButton} onPress={openNavigator}>
@@ -133,8 +150,7 @@ export default function OrderScreen() {
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
-    padding: 20
+    flex: 1
   },
 
   center: {
@@ -144,16 +160,18 @@ const styles = StyleSheet.create({
   },
 
   title: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: "600",
-    marginBottom: 20
+    margin: 20
+  },
+
+  map: {
+    width: "100%",
+    height: 250
   },
 
   card: {
-    backgroundColor: "#f5f5f5",
-    padding: 16,
-    borderRadius: 10,
-    marginBottom: 20
+    padding: 20
   },
 
   label: {
@@ -172,7 +190,7 @@ const styles = StyleSheet.create({
     padding: 14,
     borderRadius: 10,
     alignItems: "center",
-    marginBottom: 20
+    margin: 20
   },
 
   mapButtonText: {
@@ -186,6 +204,7 @@ const styles = StyleSheet.create({
     padding: 14,
     borderRadius: 10,
     alignItems: "center",
+    marginHorizontal: 20,
     marginBottom: 12
   },
 
@@ -193,7 +212,8 @@ const styles = StyleSheet.create({
     backgroundColor: "#34C759",
     padding: 14,
     borderRadius: 10,
-    alignItems: "center"
+    alignItems: "center",
+    marginHorizontal: 20
   },
 
   buttonText: {

@@ -31,7 +31,6 @@ export default function Index() {
   const [courierName, setCourierName] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
-  const [loggingOut, setLoggingOut] = useState(false)
   const [takingOrderId, setTakingOrderId] = useState<string | null>(null)
 
   useEffect(() => {
@@ -52,7 +51,7 @@ export default function Index() {
       await loadOrders(true)
 
       channel = supabase
-        .channel("courier-orders-sections")
+        .channel("courier-orders")
         .on(
           "postgres_changes",
           {
@@ -70,9 +69,7 @@ export default function Index() {
     init()
 
     return () => {
-      if (channel) {
-        supabase.removeChannel(channel)
-      }
+      if (channel) supabase.removeChannel(channel)
     }
   }, [])
 
@@ -82,8 +79,6 @@ export default function Index() {
 
       const data = await getOrders()
       setOrders(data)
-    } catch (error) {
-      console.error("Load orders error:", error)
     } finally {
       if (showLoader) setLoading(false)
       setRefreshing(false)
@@ -95,27 +90,6 @@ export default function Index() {
     await loadOrders(false)
   }
 
-  function openOrder(orderId: string) {
-    router.push(`/order/${orderId}`)
-  }
-
-  async function confirmLogout() {
-    try {
-      setLoggingOut(true)
-      await clearCourier()
-      router.replace("/login")
-    } finally {
-      setLoggingOut(false)
-    }
-  }
-
-  function handleLogoutPress() {
-    Alert.alert("Сменить курьера", "Выйти и войти под другим курьером?", [
-      { text: "Отмена", style: "cancel" },
-      { text: "Сменить", onPress: confirmLogout }
-    ])
-  }
-
   async function handleTakeOrder(orderId: string) {
     try {
       setTakingOrderId(orderId)
@@ -123,7 +97,7 @@ export default function Index() {
       await assignOrder(orderId)
       await loadOrders(false)
 
-      Alert.alert("Готово", "Заказ взят")
+      Alert.alert("Заказ взят")
     } catch (error: any) {
       Alert.alert("Ошибка", error.message || "Не удалось взять заказ")
     } finally {
@@ -167,7 +141,13 @@ export default function Index() {
           <Text style={styles.subtitle}>Курьер: {courierName}</Text>
         </View>
 
-        <TouchableOpacity style={styles.logout} onPress={handleLogoutPress}>
+        <TouchableOpacity
+          style={styles.logout}
+          onPress={async () => {
+            await clearCourier()
+            router.replace("/login")
+          }}
+        >
           <Text style={styles.logoutText}>Сменить курьера</Text>
         </TouchableOpacity>
       </View>
@@ -201,12 +181,14 @@ export default function Index() {
                 style={styles.takeButton}
                 onPress={() => handleTakeOrder(item.id)}
               >
-                <Text style={styles.takeText}>Взять заказ</Text>
+                <Text style={styles.takeText}>
+                  {takingOrderId === item.id ? "Берём..." : "Взять заказ"}
+                </Text>
               </TouchableOpacity>
             ) : (
               <TouchableOpacity
                 style={styles.openButton}
-                onPress={() => openOrder(item.id)}
+                onPress={() => router.push(`/order/${item.id}`)}
               >
                 <Text style={styles.openText}>Открыть заказ</Text>
               </TouchableOpacity>
@@ -222,7 +204,8 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#f3f4f6",
-    paddingHorizontal: 16
+    paddingHorizontal: 16,
+    paddingTop: 28
   },
 
   loading: {

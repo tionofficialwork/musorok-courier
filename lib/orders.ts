@@ -5,7 +5,9 @@ import { getCourierId } from "./storage"
 const ORDER_SELECT =
   "id, status, address, phone, package_id, package_label, package_price, total, payment_method, courier_id, created_at"
 
-export async function getActiveOrders(): Promise<Order[]> {
+export async function getOrders(): Promise<Order[]> {
+  const courierId = await getCourierId()
+
   const { data, error } = await supabase
     .from("orders")
     .select(ORDER_SELECT)
@@ -16,7 +18,15 @@ export async function getActiveOrders(): Promise<Order[]> {
     throw new Error(error.message)
   }
 
-  return (data || []) as Order[]
+  const orders = (data || []) as Order[]
+
+  return orders.filter((order) => {
+    if (order.status === "new") {
+      return true
+    }
+
+    return order.courier_id === courierId
+  })
 }
 
 export async function getOrderById(orderId: string): Promise<Order> {

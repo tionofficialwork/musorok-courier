@@ -8,6 +8,7 @@ import {
   Linking
 } from "react-native"
 import MapView, { Marker } from "react-native-maps"
+import * as Location from "expo-location"
 import { useLocalSearchParams } from "expo-router"
 
 import { getOrderById, updateOrderStatus } from "../../lib/orders"
@@ -18,11 +19,13 @@ export default function OrderScreen() {
   const { id } = useLocalSearchParams()
 
   const [order, setOrder] = useState<Order | null>(null)
-  const [coords, setCoords] = useState<any>(null)
+  const [orderCoords, setOrderCoords] = useState<any>(null)
+  const [courierCoords, setCourierCoords] = useState<any>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     loadOrder()
+    startLocationTracking()
   }, [])
 
   async function loadOrder() {
@@ -33,12 +36,42 @@ export default function OrderScreen() {
 
       const geo = await geocodeAddress(data.address)
 
-      setCoords(geo)
+      setOrderCoords(geo)
     } catch (e) {
       console.error(e)
     } finally {
       setLoading(false)
     }
+  }
+
+  async function startLocationTracking() {
+    const { status } = await Location.requestForegroundPermissionsAsync()
+
+    if (status !== "granted") {
+      console.log("Location permission denied")
+      return
+    }
+
+    const location = await Location.getCurrentPositionAsync({})
+
+    setCourierCoords({
+      latitude: location.coords.latitude,
+      longitude: location.coords.longitude
+    })
+
+    Location.watchPositionAsync(
+      {
+        accuracy: Location.Accuracy.High,
+        timeInterval: 5000,
+        distanceInterval: 5
+      },
+      (location) => {
+        setCourierCoords({
+          latitude: location.coords.latitude,
+          longitude: location.coords.longitude
+        })
+      }
+    )
   }
 
   async function changeStatus(status: Order["status"]) {
@@ -69,18 +102,10 @@ export default function OrderScreen() {
     })
   }
 
-  if (loading || !coords) {
+  if (loading || !orderCoords) {
     return (
       <View style={styles.center}>
         <ActivityIndicator />
-      </View>
-    )
-  }
-
-  if (!order) {
-    return (
-      <View style={styles.center}>
-        <Text>Заказ не найден</Text>
       </View>
     )
   }
@@ -92,24 +117,34 @@ export default function OrderScreen() {
       <MapView
         style={styles.map}
         initialRegion={{
-          latitude: coords.latitude,
-          longitude: coords.longitude,
+          latitude: orderCoords.latitude,
+          longitude: orderCoords.longitude,
           latitudeDelta: 0.01,
           longitudeDelta: 0.01
         }}
       >
-        <Marker coordinate={coords} />
+        {orderCoords && (
+          <Marker coordinate={orderCoords} title="Заказ" />
+        )}
+
+        {courierCoords && (
+          <Marker
+            coordinate={courierCoords}
+            title="Вы"
+            pinColor="blue"
+          />
+        )}
       </MapView>
 
       <View style={styles.card}>
         <Text style={styles.label}>Адрес</Text>
-        <Text style={styles.value}>{order.address}</Text>
+        <Text style={styles.value}>{order?.address}</Text>
 
         <Text style={styles.label}>Телефон</Text>
-        <Text style={styles.value}>{order.phone}</Text>
+        <Text style={styles.value}>{order?.phone}</Text>
 
         <Text style={styles.label}>Цена</Text>
-        <Text style={styles.value}>{order.total} ₽</Text>
+        <Text style={styles.value}>{order?.total} ₽</Text>
       </View>
 
       <TouchableOpacity style={styles.mapButton} onPress={openNavigator}>
@@ -118,7 +153,7 @@ export default function OrderScreen() {
         </Text>
       </TouchableOpacity>
 
-      {order.status === "assigned" && (
+      {order?.status === "assigned" && (
         <TouchableOpacity
           style={styles.button}
           onPress={() => changeStatus("on_the_way")}
@@ -127,7 +162,7 @@ export default function OrderScreen() {
         </TouchableOpacity>
       )}
 
-      {order.status === "on_the_way" && (
+      {order?.status === "on_the_way" && (
         <TouchableOpacity
           style={styles.button}
           onPress={() => changeStatus("arrived")}
@@ -136,7 +171,7 @@ export default function OrderScreen() {
         </TouchableOpacity>
       )}
 
-      {order.status === "arrived" && (
+      {order?.status === "arrived" && (
         <TouchableOpacity
           style={styles.doneButton}
           onPress={() => changeStatus("done")}
@@ -167,7 +202,7 @@ const styles = StyleSheet.create({
 
   map: {
     width: "100%",
-    height: 250
+    height: 300
   },
 
   card: {
@@ -190,7 +225,8 @@ const styles = StyleSheet.create({
     padding: 14,
     borderRadius: 10,
     alignItems: "center",
-    margin: 20
+    marginHorizontal: 20,
+    marginBottom: 20
   },
 
   mapButtonText: {

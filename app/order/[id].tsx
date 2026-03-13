@@ -10,7 +10,13 @@ import {
 } from "react-native";
 import { Stack, useLocalSearchParams } from "expo-router";
 
-import { getNextStatuses, getOrderById, updateOrderStatus } from "../../lib/orders";
+import { CURRENT_COURIER_ID, CURRENT_COURIER_NAME } from "../../lib/courier";
+import {
+  assignOrder,
+  getNextStatuses,
+  getOrderById,
+  updateOrderStatus,
+} from "../../lib/orders";
 import { supabase } from "../../lib/supabase";
 import { Order, OrderStatus } from "../../types/order";
 
@@ -37,7 +43,6 @@ function formatPaymentMethod(value: Order["payment_method"]) {
 }
 
 function getActionLabel(status: OrderStatus) {
-  if (status === "new") return "Взять заказ";
   if (status === "assigned") return "Выехал";
   if (status === "on_the_way") return "Прибыл";
   if (status === "arrived") return "Завершить заказ";
@@ -52,6 +57,9 @@ export default function CourierOrderDetailsScreen() {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [screenError, setScreenError] = useState<string | null>(null);
+
+  const isMyOrder = order?.courier_id === CURRENT_COURIER_ID;
+  const canTakeOrder = order?.status === "new" && !order?.courier_id;
 
   const nextStatus = useMemo(() => {
     if (!order) return null;
@@ -109,11 +117,26 @@ export default function CourierOrderDetailsScreen() {
     };
   }, [orderId]);
 
+  const handleTakeOrder = async () => {
+    if (!order) return;
+
+    try {
+      setActionLoading(true);
+      setScreenError(null);
+      await assignOrder(order.id);
+    } catch (error: any) {
+      setScreenError(error?.message || "Не удалось взять заказ.");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   const handleStatusUpdate = async () => {
     if (!order || !nextStatus) return;
 
     try {
       setActionLoading(true);
+      setScreenError(null);
       await updateOrderStatus(order.id, nextStatus);
     } catch (error: any) {
       setScreenError(error?.message || "Не удалось обновить статус.");
@@ -177,9 +200,30 @@ export default function CourierOrderDetailsScreen() {
                 <Text style={styles.infoLabel}>Статус</Text>
                 <Text style={styles.infoValue}>{formatStatus(order.status)}</Text>
               </View>
+
+              <View style={styles.infoRow}>
+                <Text style={styles.infoLabel}>Курьер</Text>
+                <Text style={styles.infoValue}>
+                  {order.courier_id ? order.courier_id : "Не назначен"}
+                </Text>
+              </View>
             </View>
 
-            {nextStatus ? (
+            {canTakeOrder ? (
+              <Pressable
+                style={styles.primaryButton}
+                onPress={handleTakeOrder}
+                disabled={actionLoading}
+              >
+                {actionLoading ? (
+                  <ActivityIndicator color="#04110A" />
+                ) : (
+                  <Text style={styles.primaryButtonText}>Взять заказ</Text>
+                )}
+              </Pressable>
+            ) : null}
+
+            {!canTakeOrder && isMyOrder && nextStatus ? (
               <Pressable
                 style={styles.primaryButton}
                 onPress={handleStatusUpdate}
@@ -193,13 +237,29 @@ export default function CourierOrderDetailsScreen() {
                   </Text>
                 )}
               </Pressable>
-            ) : (
+            ) : null}
+
+            {!canTakeOrder && !isMyOrder && order.status !== "done" && order.status !== "cancelled" ? (
+              <View style={styles.completedCard}>
+                <Text style={styles.completedText}>
+                  Этот заказ закреплён за другим курьером.
+                </Text>
+              </View>
+            ) : null}
+
+            {!canTakeOrder && isMyOrder && !nextStatus ? (
               <View style={styles.completedCard}>
                 <Text style={styles.completedText}>
                   Для этого заказа больше нет доступных действий.
                 </Text>
               </View>
-            )}
+            ) : null}
+
+            <View style={styles.courierCard}>
+              <Text style={styles.courierTitle}>Текущий курьер</Text>
+              <Text style={styles.courierValue}>{CURRENT_COURIER_NAME}</Text>
+              <Text style={styles.courierMeta}>{CURRENT_COURIER_ID}</Text>
+            </View>
           </>
         ) : null}
       </ScrollView>
@@ -302,6 +362,28 @@ const styles = StyleSheet.create({
     color: "#CBD5E1",
     fontSize: 15,
     lineHeight: 22,
+  },
+  courierCard: {
+    backgroundColor: "#081426",
+    borderRadius: 20,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: "#0F2138",
+  },
+  courierTitle: {
+    color: "#94A3B8",
+    fontSize: 13,
+    marginBottom: 8,
+  },
+  courierValue: {
+    color: "#FFFFFF",
+    fontSize: 20,
+    fontWeight: "700",
+    marginBottom: 4,
+  },
+  courierMeta: {
+    color: "#CBD5E1",
+    fontSize: 14,
   },
   errorCard: {
     backgroundColor: "#081426",

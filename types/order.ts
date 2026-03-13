@@ -18,5 +18,6 @@ export type Order = {
   package_price: number | null;
   total: number | null;
   payment_method: PaymentMethod | null;
+  courier_id: string | null;
   created_at: string | null;
 };

@@ -6,12 +6,13 @@ import {
   SectionList,
   TouchableOpacity,
   StyleSheet,
-  RefreshControl
+  RefreshControl,
+  Alert
 } from "react-native"
 import { useRouter } from "expo-router"
 
 import { getOrders } from "../lib/orders"
-import { getCourierId, getCourierName } from "../lib/storage"
+import { getCourierId, getCourierName, clearCourier } from "../lib/storage"
 import { supabase } from "../lib/supabase"
 import { Order } from "../types/order"
 
@@ -29,6 +30,7 @@ export default function Index() {
   const [courierName, setCourierName] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
+  const [loggingOut, setLoggingOut] = useState(false)
 
   useEffect(() => {
     let channel: ReturnType<typeof supabase.channel> | null = null
@@ -99,6 +101,40 @@ export default function Index() {
     router.push(`/order/${orderId}`)
   }
 
+  function handleLogoutPress() {
+    Alert.alert(
+      "Сменить курьера",
+      "Вы хотите выйти и войти под другим курьером?",
+      [
+        {
+          text: "Отмена",
+          style: "cancel"
+        },
+        {
+          text: "Сменить",
+          style: "destructive",
+          onPress: confirmLogout
+        }
+      ]
+    )
+  }
+
+  async function confirmLogout() {
+    try {
+      setLoggingOut(true)
+      await clearCourier()
+      setCourierId(null)
+      setCourierName(null)
+      setOrders([])
+      router.replace("/login")
+    } catch (error) {
+      console.error("Logout error:", error)
+      Alert.alert("Ошибка", "Не удалось сменить курьера")
+    } finally {
+      setLoggingOut(false)
+    }
+  }
+
   const sections = useMemo<OrderSection[]>(() => {
     const newOrders = orders.filter((order) => order.status === "new")
     const myOrders = orders.filter(
@@ -147,10 +183,22 @@ export default function Index() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.title}>Заказы</Text>
-        {!!courierName && (
-          <Text style={styles.subtitle}>Курьер: {courierName}</Text>
-        )}
+        <View>
+          <Text style={styles.title}>Заказы</Text>
+          {!!courierName && (
+            <Text style={styles.subtitle}>Курьер: {courierName}</Text>
+          )}
+        </View>
+
+        <TouchableOpacity
+          style={[styles.logoutButton, loggingOut && styles.logoutButtonDisabled]}
+          onPress={handleLogoutPress}
+          disabled={loggingOut}
+        >
+          <Text style={styles.logoutButtonText}>
+            {loggingOut ? "Выход..." : "Сменить курьера"}
+          </Text>
+        </TouchableOpacity>
       </View>
 
       <SectionList
@@ -180,7 +228,9 @@ export default function Index() {
               {item.package_label} • {item.total} ₽
             </Text>
 
-            <Text style={styles.status}>Статус: {getStatusLabel(item.status)}</Text>
+            <Text style={styles.status}>
+              Статус: {getStatusLabel(item.status)}
+            </Text>
 
             {item.phone ? (
               <Text style={styles.meta}>Телефон: {item.phone}</Text>
@@ -234,7 +284,11 @@ const styles = StyleSheet.create({
   },
 
   header: {
-    marginBottom: 16
+    marginBottom: 16,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 12
   },
 
   title: {
@@ -246,6 +300,23 @@ const styles = StyleSheet.create({
     marginTop: 6,
     fontSize: 14,
     color: "#666"
+  },
+
+  logoutButton: {
+    backgroundColor: "#111",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 12
+  },
+
+  logoutButtonDisabled: {
+    opacity: 0.6
+  },
+
+  logoutButtonText: {
+    color: "#fff",
+    fontSize: 13,
+    fontWeight: "700"
   },
 
   listContent: {

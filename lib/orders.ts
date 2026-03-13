@@ -50,17 +50,25 @@ export async function assignOrder(orderId: string) {
     throw new Error("Courier not logged in")
   }
 
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("orders")
     .update({
       status: "assigned",
       courier_id: courierId
     })
     .eq("id", orderId)
+    .eq("status", "new")
+    .select()
 
   if (error) {
     throw new Error(error.message)
   }
+
+  if (!data || data.length === 0) {
+    throw new Error("Order already taken")
+  }
+
+  return data[0] as Order
 }
 
 export async function updateOrderStatus(

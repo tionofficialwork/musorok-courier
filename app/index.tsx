@@ -7,7 +7,8 @@ import {
   TouchableOpacity,
   StyleSheet,
   RefreshControl,
-  Alert
+  Alert,
+  SafeAreaView
 } from "react-native"
 import { useRouter } from "expo-router"
 
@@ -77,18 +78,14 @@ export default function Index() {
 
   async function loadOrders(showLoader = false) {
     try {
-      if (showLoader) {
-        setLoading(true)
-      }
+      if (showLoader) setLoading(true)
 
       const data = await getOrders()
       setOrders(data)
     } catch (error) {
       console.error("Load orders error:", error)
     } finally {
-      if (showLoader) {
-        setLoading(false)
-      }
+      if (showLoader) setLoading(false)
       setRefreshing(false)
     }
   }
@@ -102,38 +99,21 @@ export default function Index() {
     router.push(`/order/${orderId}`)
   }
 
-  function handleLogoutPress() {
-    Alert.alert(
-      "Сменить курьера",
-      "Вы хотите выйти и войти под другим курьером?",
-      [
-        {
-          text: "Отмена",
-          style: "cancel"
-        },
-        {
-          text: "Сменить",
-          style: "destructive",
-          onPress: confirmLogout
-        }
-      ]
-    )
-  }
-
   async function confirmLogout() {
     try {
       setLoggingOut(true)
       await clearCourier()
-      setCourierId(null)
-      setCourierName(null)
-      setOrders([])
       router.replace("/login")
-    } catch (error) {
-      console.error("Logout error:", error)
-      Alert.alert("Ошибка", "Не удалось сменить курьера")
     } finally {
       setLoggingOut(false)
     }
+  }
+
+  function handleLogoutPress() {
+    Alert.alert("Сменить курьера", "Выйти и войти под другим курьером?", [
+      { text: "Отмена", style: "cancel" },
+      { text: "Сменить", onPress: confirmLogout }
+    ])
   }
 
   async function handleTakeOrder(orderId: string) {
@@ -144,358 +124,209 @@ export default function Index() {
       await loadOrders(false)
 
       Alert.alert("Готово", "Заказ взят")
-    } catch (error) {
-      console.error("Take order error:", error)
-
-      const message =
-        error instanceof Error ? error.message : "Не удалось взять заказ"
-
-      if (message === "Order already taken") {
-        Alert.alert("Заказ уже занят", "Этот заказ уже взял другой курьер")
-      } else if (message === "Courier not logged in") {
-        Alert.alert("Ошибка", "Сессия курьера истекла, войдите заново")
-        router.replace("/login")
-      } else {
-        Alert.alert("Ошибка", message)
-      }
+    } catch (error: any) {
+      Alert.alert("Ошибка", error.message || "Не удалось взять заказ")
     } finally {
       setTakingOrderId(null)
     }
   }
 
   const sections = useMemo<OrderSection[]>(() => {
-    const newOrders = orders.filter((order) => order.status === "new")
+    const newOrders = orders.filter((o) => o.status === "new")
     const myOrders = orders.filter(
-      (order) => order.status === "assigned" && order.courier_id === courierId
+      (o) => o.status === "assigned" && o.courier_id === courierId
     )
-    const onTheWayOrders = orders.filter(
-      (order) =>
-        order.status === "on_the_way" && order.courier_id === courierId
+    const onTheWay = orders.filter(
+      (o) => o.status === "on_the_way" && o.courier_id === courierId
     )
-    const arrivedOrders = orders.filter(
-      (order) => order.status === "arrived" && order.courier_id === courierId
+    const arrived = orders.filter(
+      (o) => o.status === "arrived" && o.courier_id === courierId
     )
 
     return [
-      {
-        title: "Новые заказы",
-        data: newOrders,
-        emptyText: "Новых заказов пока нет"
-      },
-      {
-        title: "Мои заказы",
-        data: myOrders,
-        emptyText: "У вас пока нет назначенных заказов"
-      },
-      {
-        title: "В пути",
-        data: onTheWayOrders,
-        emptyText: "Нет заказов в пути"
-      },
-      {
-        title: "Прибыл",
-        data: arrivedOrders,
-        emptyText: "Нет заказов со статусом 'прибыл'"
-      }
+      { title: "Новые заказы", data: newOrders, emptyText: "Нет новых заказов" },
+      { title: "Мои заказы", data: myOrders, emptyText: "Нет назначенных заказов" },
+      { title: "В пути", data: onTheWay, emptyText: "Нет заказов в пути" },
+      { title: "Прибыл", data: arrived, emptyText: "Нет прибывших заказов" }
     ]
   }, [orders, courierId])
 
   if (loading) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#111827" />
-      </View>
+      <SafeAreaView style={styles.loading}>
+        <ActivityIndicator size="large" />
+      </SafeAreaView>
     )
   }
 
   return (
-    <View style={styles.container}>
-      <View style={styles.headerCard}>
-        <View style={styles.headerTopRow}>
-          <View style={styles.headerTextBlock}>
-            <Text style={styles.title}>Заказы</Text>
-            {!!courierName && (
-              <Text style={styles.subtitle}>Курьер: {courierName}</Text>
-            )}
-          </View>
-
-          <TouchableOpacity
-            style={[styles.logoutButton, loggingOut && styles.buttonDisabled]}
-            onPress={handleLogoutPress}
-            disabled={loggingOut}
-          >
-            <Text style={styles.logoutButtonText}>
-              {loggingOut ? "Выход..." : "Сменить курьера"}
-            </Text>
-          </TouchableOpacity>
+    <SafeAreaView style={styles.container}>
+      <View style={styles.header}>
+        <View>
+          <Text style={styles.title}>Заказы</Text>
+          <Text style={styles.subtitle}>Курьер: {courierName}</Text>
         </View>
+
+        <TouchableOpacity style={styles.logout} onPress={handleLogoutPress}>
+          <Text style={styles.logoutText}>Сменить курьера</Text>
+        </TouchableOpacity>
       </View>
 
       <SectionList
         sections={sections}
         keyExtractor={(item) => item.id}
-        stickySectionHeadersEnabled={false}
-        contentContainerStyle={styles.listContent}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
         renderSectionHeader={({ section }) => (
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>{section.title}</Text>
-            <View style={styles.sectionBadge}>
-              <Text style={styles.sectionBadgeText}>{section.data.length}</Text>
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>{section.data.length}</Text>
             </View>
           </View>
         )}
-        renderItem={({ item }) => {
-          const isNew = item.status === "new"
-          const isTakingThisOrder = takingOrderId === item.id
+        renderItem={({ item }) => (
+          <View style={styles.card}>
+            <Text style={styles.address}>{item.address}</Text>
 
-          return (
-            <TouchableOpacity
-              style={styles.card}
-              onPress={() => openOrder(item.id)}
-              activeOpacity={0.9}
-            >
-              <Text style={styles.address}>{item.address}</Text>
+            <Text style={styles.info}>
+              {item.package_label} • {item.total} ₽
+            </Text>
 
-              <Text style={styles.info}>
-                {item.package_label} • {item.total} ₽
-              </Text>
+            <Text style={styles.meta}>Телефон: {item.phone}</Text>
 
-              <Text style={styles.status}>
-                Статус: {getStatusLabel(item.status)}
-              </Text>
-
-              {item.phone ? (
-                <Text style={styles.meta}>Телефон: {item.phone}</Text>
-              ) : null}
-
-              {isNew ? (
-                <TouchableOpacity
-                  style={[
-                    styles.takeButton,
-                    isTakingThisOrder && styles.buttonDisabled
-                  ]}
-                  onPress={() => handleTakeOrder(item.id)}
-                  disabled={isTakingThisOrder}
-                >
-                  <Text style={styles.takeButtonText}>
-                    {isTakingThisOrder ? "Берём..." : "Взять заказ"}
-                  </Text>
-                </TouchableOpacity>
-              ) : (
-                <TouchableOpacity
-                  style={styles.openButton}
-                  onPress={() => openOrder(item.id)}
-                >
-                  <Text style={styles.openButtonText}>Открыть заказ</Text>
-                </TouchableOpacity>
-              )}
-            </TouchableOpacity>
-          )
-        }}
-        renderSectionFooter={({ section }) =>
-          section.data.length === 0 ? (
-            <View style={styles.emptySection}>
-              <Text style={styles.emptySectionText}>{section.emptyText}</Text>
-            </View>
-          ) : (
-            <View style={styles.sectionSpacer} />
-          )
-        }
+            {item.status === "new" ? (
+              <TouchableOpacity
+                style={styles.takeButton}
+                onPress={() => handleTakeOrder(item.id)}
+              >
+                <Text style={styles.takeText}>Взять заказ</Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                style={styles.openButton}
+                onPress={() => openOrder(item.id)}
+              >
+                <Text style={styles.openText}>Открыть заказ</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
       />
-    </View>
+    </SafeAreaView>
   )
-}
-
-function getStatusLabel(status: Order["status"]) {
-  switch (status) {
-    case "new":
-      return "Новый"
-    case "assigned":
-      return "Назначен"
-    case "on_the_way":
-      return "В пути"
-    case "arrived":
-      return "Прибыл"
-    case "done":
-      return "Выполнен"
-    case "cancelled":
-      return "Отменён"
-    default:
-      return status
-  }
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#f3f4f6",
-    paddingHorizontal: 16,
-    paddingTop: 16
+    paddingHorizontal: 16
   },
 
-  loadingContainer: {
+  loading: {
     flex: 1,
     justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "#f3f4f6"
+    alignItems: "center"
   },
 
-  headerCard: {
-    backgroundColor: "#ffffff",
-    borderRadius: 18,
-    padding: 16,
-    marginBottom: 12
-  },
-
-  headerTopRow: {
+  header: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "flex-start",
-    gap: 12
-  },
-
-  headerTextBlock: {
-    flex: 1
+    alignItems: "center",
+    marginBottom: 16
   },
 
   title: {
-    fontSize: 30,
-    fontWeight: "800",
-    color: "#111827"
+    fontSize: 28,
+    fontWeight: "800"
   },
 
   subtitle: {
-    marginTop: 6,
-    fontSize: 15,
-    color: "#4b5563"
+    marginTop: 4,
+    color: "#6b7280"
   },
 
-  logoutButton: {
+  logout: {
     backgroundColor: "#111827",
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 12
   },
 
-  logoutButtonText: {
-    color: "#ffffff",
-    fontSize: 13,
+  logoutText: {
+    color: "#fff",
     fontWeight: "700"
-  },
-
-  listContent: {
-    paddingBottom: 32
   },
 
   sectionHeader: {
     flexDirection: "row",
-    alignItems: "center",
     justifyContent: "space-between",
     marginTop: 12,
-    marginBottom: 10
+    marginBottom: 8
   },
 
   sectionTitle: {
-    fontSize: 22,
-    fontWeight: "800",
-    color: "#111827"
+    fontSize: 20,
+    fontWeight: "700"
   },
 
-  sectionBadge: {
-    minWidth: 30,
-    height: 30,
-    borderRadius: 15,
+  badge: {
     backgroundColor: "#111827",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 8
+    borderRadius: 14,
+    paddingHorizontal: 10,
+    paddingVertical: 4
   },
 
-  sectionBadgeText: {
-    color: "#ffffff",
-    fontSize: 12,
-    fontWeight: "800"
+  badgeText: {
+    color: "#fff",
+    fontWeight: "700"
   },
 
   card: {
-    backgroundColor: "#ffffff",
+    backgroundColor: "#fff",
     padding: 16,
-    borderRadius: 18,
+    borderRadius: 16,
     marginBottom: 10
   },
 
   address: {
     fontSize: 18,
-    fontWeight: "800",
-    color: "#111827"
+    fontWeight: "700"
   },
 
   info: {
-    marginTop: 8,
-    fontSize: 16,
-    color: "#374151"
-  },
-
-  status: {
-    marginTop: 10,
-    fontSize: 14,
-    color: "#4b5563"
+    marginTop: 6
   },
 
   meta: {
-    marginTop: 6,
-    fontSize: 14,
-    color: "#4b5563"
-  },
-
-  takeButton: {
-    marginTop: 14,
-    backgroundColor: "#111827",
-    paddingVertical: 14,
-    borderRadius: 12,
-    alignItems: "center"
-  },
-
-  takeButtonText: {
-    color: "#ffffff",
-    fontSize: 15,
-    fontWeight: "800"
-  },
-
-  openButton: {
-    marginTop: 14,
-    backgroundColor: "#e5e7eb",
-    paddingVertical: 14,
-    borderRadius: 12,
-    alignItems: "center"
-  },
-
-  openButtonText: {
-    color: "#111827",
-    fontSize: 15,
-    fontWeight: "800"
-  },
-
-  emptySection: {
-    backgroundColor: "#ffffff",
-    padding: 14,
-    borderRadius: 14,
-    marginBottom: 8
-  },
-
-  emptySectionText: {
-    fontSize: 14,
+    marginTop: 4,
     color: "#6b7280"
   },
 
-  sectionSpacer: {
-    height: 6
+  takeButton: {
+    marginTop: 12,
+    backgroundColor: "#111827",
+    padding: 12,
+    borderRadius: 10,
+    alignItems: "center"
   },
 
-  buttonDisabled: {
-    opacity: 0.6
+  takeText: {
+    color: "#fff",
+    fontWeight: "700"
+  },
+
+  openButton: {
+    marginTop: 12,
+    backgroundColor: "#e5e7eb",
+    padding: 12,
+    borderRadius: 10,
+    alignItems: "center"
+  },
+
+  openText: {
+    fontWeight: "700"
   }
 })

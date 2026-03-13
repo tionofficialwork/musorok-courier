@@ -35,8 +35,6 @@ type Order = {
   payment_method: string | null;
   courier_id: string | null;
   created_at: string | null;
-
-  // optional fields if they already exist in DB / query
   latitude?: number | null;
   longitude?: number | null;
   lat?: number | null;
@@ -72,40 +70,40 @@ const STATUS_META: Record<
     shortLabel: "Назначен",
     color: "#7C3AED",
     bg: "#EDE9FE",
-    description: "Заказ закреплён за курьером. Можно выезжать.",
     progress: 0.35,
+    description: "Заказ закреплён за курьером. Можно выезжать.",
   },
   on_the_way: {
     label: "В пути",
     shortLabel: "В пути",
     color: "#EA580C",
     bg: "#FFEDD5",
-    description: "Курьер направляется к клиенту.",
     progress: 0.6,
+    description: "Курьер направляется к клиенту.",
   },
   arrived: {
     label: "Прибыл",
     shortLabel: "Прибыл",
     color: "#059669",
     bg: "#D1FAE5",
-    description: "Курьер прибыл на точку. Можно завершать заказ.",
     progress: 0.82,
+    description: "Курьер прибыл на точку. Можно завершать заказ.",
   },
   done: {
     label: "Завершён",
     shortLabel: "Завершён",
     color: "#16A34A",
     bg: "#DCFCE7",
-    description: "Заказ успешно завершён.",
     progress: 1,
+    description: "Заказ успешно завершён.",
   },
   cancelled: {
     label: "Отменён",
     shortLabel: "Отменён",
     color: "#DC2626",
     bg: "#FEE2E2",
-    description: "Заказ был отменён.",
     progress: 1,
+    description: "Заказ был отменён.",
   },
 };
 
@@ -230,6 +228,15 @@ function formatDistance(meters: number | null) {
   return `${(meters / 1000).toFixed(1)} км`;
 }
 
+async function tryOpenUrl(url: string) {
+  try {
+    await Linking.openURL(url);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export default function OrderDetailsScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ id?: string | string[] }>();
@@ -243,12 +250,11 @@ export default function OrderDetailsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [locationLoading, setLocationLoading] = useState(false);
+  const [navigatorLoading, setNavigatorLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const statusMeta = useMemo(() => {
-    if (!order) {
-      return STATUS_META.assigned;
-    }
+    if (!order) return STATUS_META.assigned;
     return STATUS_META[order.status];
   }, [order]);
 
@@ -302,7 +308,7 @@ export default function OrderDetailsScreen() {
         longitude: location.coords.longitude,
       });
     } catch {
-      // silently ignore location failure for MVP
+      // ignore for MVP
     } finally {
       setLocationLoading(false);
     }
@@ -354,50 +360,60 @@ export default function OrderDetailsScreen() {
     }
 
     const url = `tel:${order.phone}`;
-    const supported = await Linking.canOpenURL(url);
 
-    if (!supported) {
+    try {
+      await Linking.openURL(url);
+    } catch {
       Alert.alert("Ошибка", "Не удалось открыть набор номера.");
-      return;
     }
-
-    await Linking.openURL(url);
   }, [order?.phone]);
 
   const handleOpenNavigator = useCallback(async () => {
+    if (navigatorLoading) return;
+
     if (!order?.address && !orderCoords) {
       Alert.alert("Нет адреса", "В заказе отсутствует адрес назначения.");
       return;
     }
 
-    const target = orderCoords
-      ? `${orderCoords.longitude},${orderCoords.latitude}`
-      : encodeURIComponent(order.address || "");
+    try {
+      setNavigatorLoading(true);
 
-    const yandexUrl = orderCoords
-      ? `yandexnavi://build_route_on_map?lat_to=${orderCoords.latitude}&lon_to=${orderCoords.longitude}`
-      : `yandexnavi://build_route_on_map?text=${target}`;
+      const encodedAddress = encodeURIComponent(order?.address || "");
 
-    const browserUrl = orderCoords
-      ? `https://yandex.ru/maps/?rtext=~${orderCoords.latitude},${orderCoords.longitude}&rtt=auto`
-      : `https://yandex.ru/maps/?text=${target}`;
+      const yandexNaviUrl = orderCoords
+        ? `yandexnavi://build_route_on_map?lat_to=${orderCoords.latitude}&lon_to=${orderCoords.longitude}`
+        : `yandexnavi://build_route_on_map?text=${encodedAddress}`;
 
-    const canOpenYandex = await Linking.canOpenURL(yandexUrl);
+      const yandexMapsUrl = orderCoords
+        ? `yandexmaps://maps.yandex.ru/?rtext=~${orderCoords.latitude},${orderCoords.longitude}&rtt=auto`
+        : `yandexmaps://maps.yandex.ru/?text=${encodedAddress}`;
 
-    if (canOpenYandex) {
-      await Linking.openURL(yandexUrl);
-      return;
+      const browserYandexUrl = orderCoords
+        ? `https://yandex.ru/maps/?rtext=~${orderCoords.latitude},${orderCoords.longitude}&rtt=auto`
+        : `https://yandex.ru/maps/?text=${encodedAddress}`;
+
+      const googleMapsUrl = orderCoords
+        ? `https://www.google.com/maps/dir/?api=1&destination=${orderCoords.latitude},${orderCoords.longitude}&travelmode=driving`
+        : `https://www.google.com/maps/search/?api=1&query=${encodedAddress}`;
+
+      const openedYandexNavi = await tryOpenUrl(yandexNaviUrl);
+      if (openedYandexNavi) return;
+
+      const openedYandexMaps = await tryOpenUrl(yandexMapsUrl);
+      if (openedYandexMaps) return;
+
+      const openedBrowserYandex = await tryOpenUrl(browserYandexUrl);
+      if (openedBrowserYandex) return;
+
+      const openedGoogleMaps = await tryOpenUrl(googleMapsUrl);
+      if (openedGoogleMaps) return;
+
+      Alert.alert("Ошибка", "Не удалось открыть навигацию.");
+    } finally {
+      setNavigatorLoading(false);
     }
-
-    const canOpenBrowser = await Linking.canOpenURL(browserUrl);
-
-    if (canOpenBrowser) {
-      await Linking.openURL(browserUrl);
-      return;
-    }
-
-    Alert.alert("Ошибка", "Не удалось открыть Яндекс Навигатор.");
-  }, [order?.address, orderCoords]);
+  }, [navigatorLoading, order?.address, orderCoords]);
 
   const handlePrimaryAction = useCallback(async () => {
     if (!order || !id || actionLoading) return;
@@ -425,10 +441,7 @@ export default function OrderDetailsScreen() {
       }
 
       const nextStatus = getNextStatus(order.status);
-
-      if (!nextStatus) {
-        return;
-      }
+      if (!nextStatus) return;
 
       const { error: updateError } = await supabase
         .from("orders")
@@ -436,9 +449,7 @@ export default function OrderDetailsScreen() {
         .eq("id", id)
         .eq("status", order.status);
 
-      if (updateError) {
-        throw updateError;
-      }
+      if (updateError) throw updateError;
 
       if (nextStatus === "done") {
         Alert.alert("Готово", "Заказ завершён.");
@@ -686,7 +697,6 @@ export default function OrderDetailsScreen() {
               <Polyline
                 coordinates={[courierLocation, orderCoords]}
                 strokeWidth={4}
-                strokeColor="#111827"
               />
             ) : null}
           </MapView>
@@ -705,12 +715,20 @@ export default function OrderDetailsScreen() {
 
           <View style={styles.actionsRow}>
             <TouchableOpacity
-              style={styles.secondaryButton}
+              style={[
+                styles.secondaryButton,
+                navigatorLoading && styles.buttonDisabled,
+              ]}
               onPress={handleOpenNavigator}
+              disabled={navigatorLoading}
             >
-              <Text style={styles.secondaryButtonText}>
-                Открыть в Яндекс Навигаторе
-              </Text>
+              {navigatorLoading ? (
+                <ActivityIndicator />
+              ) : (
+                <Text style={styles.secondaryButtonText}>
+                  Открыть в Яндекс Навигаторе
+                </Text>
+              )}
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -731,10 +749,18 @@ export default function OrderDetailsScreen() {
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={styles.quickActionButton}
+              style={[
+                styles.quickActionButton,
+                navigatorLoading && styles.buttonDisabled,
+              ]}
               onPress={handleOpenNavigator}
+              disabled={navigatorLoading}
             >
-              <Text style={styles.quickActionButtonText}>Построить маршрут</Text>
+              {navigatorLoading ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <Text style={styles.quickActionButtonText}>Построить маршрут</Text>
+              )}
             </TouchableOpacity>
           </View>
         </View>
@@ -1064,5 +1090,8 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "700",
     color: "#111827",
+  },
+  buttonDisabled: {
+    opacity: 0.7,
   },
 });

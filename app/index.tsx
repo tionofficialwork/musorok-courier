@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
   Pressable,
-  RefreshControl,
   SafeAreaView,
   StyleSheet,
   Text,
@@ -20,21 +19,48 @@ function formatPrice(value: number | null) {
   return `${value} ₽`;
 }
 
-function formatStatus(status: Order["status"]) {
-  if (status === "new") return "Новый";
-  if (status === "assigned") return "Назначен";
-  if (status === "on_the_way") return "В пути";
-  if (status === "arrived") return "Прибыл";
-  if (status === "done") return "Выполнен";
-  if (status === "cancelled") return "Отменён";
-  return status;
-}
+function Section({
+  title,
+  orders,
+  router,
+}: {
+  title: string;
+  orders: Order[];
+  router: any;
+}) {
+  if (orders.length === 0) return null;
 
-function formatPaymentMethod(value: Order["payment_method"]) {
-  if (value === "card") return "Картой";
-  if (value === "cash") return "Наличными";
-  if (value === "sbp") return "СБП";
-  return "—";
+  return (
+    <View style={styles.section}>
+      <Text style={styles.sectionTitle}>{title}</Text>
+
+      {orders.map((item) => (
+        <Pressable
+          key={item.id}
+          style={styles.card}
+          onPress={() =>
+            router.push({
+              pathname: "/order/[id]",
+              params: { id: item.id },
+            })
+          }
+        >
+          <View style={styles.row}>
+            <Text style={styles.status}>{item.status}</Text>
+            <Text style={styles.price}>{formatPrice(item.total)}</Text>
+          </View>
+
+          <Text style={styles.address}>{item.address}</Text>
+
+          <Text style={styles.meta}>
+            {item.package_label} • {item.payment_method}
+          </Text>
+
+          <Text style={styles.meta}>{item.phone}</Text>
+        </Pressable>
+      ))}
+    </View>
+  );
 }
 
 export default function CourierHomeScreen() {
@@ -42,36 +68,23 @@ export default function CourierHomeScreen() {
 
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [screenError, setScreenError] = useState<string | null>(null);
 
   const loadOrders = useCallback(async () => {
-    try {
-      setScreenError(null);
-      const nextOrders = await getActiveOrders();
-      setOrders(nextOrders);
-    } catch (error: any) {
-      setScreenError(error?.message || "Не удалось загрузить заказы.");
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
+    const nextOrders = await getActiveOrders();
+    setOrders(nextOrders);
+    setLoading(false);
   }, []);
 
   useEffect(() => {
     loadOrders();
 
     const channel = supabase
-      .channel("courier-orders-list")
+      .channel("orders-courier")
       .on(
         "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "orders",
-        },
-        async () => {
-          await loadOrders();
+        { event: "*", schema: "public", table: "orders" },
+        () => {
+          loadOrders();
         }
       )
       .subscribe();
@@ -79,82 +92,72 @@ export default function CourierHomeScreen() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [loadOrders]);
+  }, []);
 
-  const handleRefresh = async () => {
-    setRefreshing(true);
-    await loadOrders();
-  };
+  const newOrders = useMemo(
+    () => orders.filter((o) => o.status === "new"),
+    [orders]
+  );
+
+  const assignedOrders = useMemo(
+    () => orders.filter((o) => o.status === "assigned"),
+    [orders]
+  );
+
+  const onTheWayOrders = useMemo(
+    () => orders.filter((o) => o.status === "on_the_way"),
+    [orders]
+  );
+
+  const arrivedOrders = useMemo(
+    () => orders.filter((o) => o.status === "arrived"),
+    [orders]
+  );
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <View style={styles.center}>
+          <ActivityIndicator size="large" />
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safeArea}>
       <Stack.Screen options={{ title: "Заказы" }} />
 
-      <View style={styles.container}>
-        <View style={styles.header}>
-          <Text style={styles.title}>Активные заказы</Text>
-          <Text style={styles.subtitle}>Курьерское приложение МусорОК</Text>
-        </View>
+      <FlatList
+        data={[{ key: "sections" }]}
+        renderItem={() => (
+          <>
+            <Section
+              title="Новые заказы"
+              orders={newOrders}
+              router={router}
+            />
 
-        {loading ? (
-          <View style={styles.centered}>
-            <ActivityIndicator size="large" />
-            <Text style={styles.loadingText}>Загружаем заказы...</Text>
-          </View>
-        ) : screenError ? (
-          <View style={styles.errorCard}>
-            <Text style={styles.errorTitle}>Ошибка</Text>
-            <Text style={styles.errorText}>{screenError}</Text>
+            <Section
+              title="Назначенные"
+              orders={assignedOrders}
+              router={router}
+            />
 
-            <Pressable style={styles.retryButton} onPress={loadOrders}>
-              <Text style={styles.retryButtonText}>Повторить</Text>
-            </Pressable>
-          </View>
-        ) : (
-          <FlatList
-            data={orders}
-            keyExtractor={(item) => item.id}
-            contentContainerStyle={styles.listContent}
-            refreshControl={
-              <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
-            }
-            ListEmptyComponent={
-              <View style={styles.emptyCard}>
-                <Text style={styles.emptyTitle}>Активных заказов нет</Text>
-                <Text style={styles.emptyText}>
-                  Когда появятся новые заказы, они покажутся здесь автоматически.
-                </Text>
-              </View>
-            }
-            renderItem={({ item }) => (
-              <Pressable
-                style={styles.card}
-                onPress={() =>
-                  router.push({
-                    pathname: "/order/[id]",
-                    params: { id: item.id },
-                  })
-                }
-              >
-                <View style={styles.cardTopRow}>
-                  <Text style={styles.cardStatus}>{formatStatus(item.status)}</Text>
-                  <Text style={styles.cardPrice}>{formatPrice(item.total)}</Text>
-                </View>
+            <Section
+              title="В пути"
+              orders={onTheWayOrders}
+              router={router}
+            />
 
-                <Text style={styles.cardAddress}>{item.address || "Без адреса"}</Text>
-
-                <Text style={styles.cardMeta}>
-                  {item.package_label || "Без пакета"} • {formatPaymentMethod(item.payment_method)}
-                </Text>
-
-                <Text style={styles.cardMeta}>{item.phone || "Без телефона"}</Text>
-
-                <Text style={styles.cardId}>#{item.id}</Text>
-              </Pressable>
-            )}
-          />
+            <Section
+              title="Прибыл"
+              orders={arrivedOrders}
+              router={router}
+            />
+          </>
         )}
-      </View>
+      />
     </SafeAreaView>
   );
 }
@@ -164,122 +167,57 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#031225",
   },
-  container: {
+
+  center: {
     flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+
+  section: {
     padding: 16,
   },
-  header: {
-    marginBottom: 16,
+
+  sectionTitle: {
+    color: "#fff",
+    fontSize: 24,
+    fontWeight: "700",
+    marginBottom: 12,
   },
-  title: {
-    color: "#FFFFFF",
-    fontSize: 32,
-    fontWeight: "800",
-    marginBottom: 4,
-  },
-  subtitle: {
-    color: "#94A3B8",
-    fontSize: 15,
-  },
-  centered: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 12,
-  },
-  loadingText: {
-    color: "#FFFFFF",
-    fontSize: 15,
-  },
-  listContent: {
-    gap: 12,
-    paddingBottom: 24,
-    flexGrow: 1,
-  },
+
   card: {
     backgroundColor: "#081426",
     borderRadius: 20,
-    padding: 18,
+    padding: 16,
+    marginBottom: 10,
     borderWidth: 1,
     borderColor: "#0F2138",
   },
-  cardTopRow: {
+
+  row: {
     flexDirection: "row",
     justifyContent: "space-between",
-    marginBottom: 10,
-    gap: 12,
   },
-  cardStatus: {
+
+  status: {
     color: "#22C55E",
-    fontSize: 14,
     fontWeight: "700",
   },
-  cardPrice: {
-    color: "#FFFFFF",
-    fontSize: 16,
+
+  price: {
+    color: "#fff",
     fontWeight: "700",
   },
-  cardAddress: {
-    color: "#FFFFFF",
+
+  address: {
+    color: "#fff",
     fontSize: 20,
     fontWeight: "700",
-    marginBottom: 8,
+    marginTop: 6,
   },
-  cardMeta: {
+
+  meta: {
     color: "#CBD5E1",
-    fontSize: 14,
-    marginBottom: 4,
-  },
-  cardId: {
-    color: "#64748B",
-    fontSize: 12,
-    marginTop: 10,
-  },
-  emptyCard: {
-    backgroundColor: "#081426",
-    borderRadius: 20,
-    padding: 24,
-    borderWidth: 1,
-    borderColor: "#0F2138",
-  },
-  emptyTitle: {
-    color: "#FFFFFF",
-    fontSize: 20,
-    fontWeight: "700",
-    marginBottom: 8,
-  },
-  emptyText: {
-    color: "#CBD5E1",
-    fontSize: 15,
-    lineHeight: 22,
-  },
-  errorCard: {
-    backgroundColor: "#081426",
-    borderRadius: 20,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: "#0F2138",
-    gap: 12,
-  },
-  errorTitle: {
-    color: "#FFFFFF",
-    fontSize: 20,
-    fontWeight: "700",
-  },
-  errorText: {
-    color: "#FCA5A5",
-    fontSize: 15,
-    lineHeight: 22,
-  },
-  retryButton: {
-    backgroundColor: "#22C55E",
-    borderRadius: 14,
-    paddingVertical: 14,
-    alignItems: "center",
-  },
-  retryButtonText: {
-    color: "#04110A",
-    fontSize: 16,
-    fontWeight: "800",
+    marginTop: 4,
   },
 });

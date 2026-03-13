@@ -11,7 +11,7 @@ import {
 } from "react-native"
 import { useRouter } from "expo-router"
 
-import { getOrders } from "../lib/orders"
+import { getOrders, assignOrder } from "../lib/orders"
 import { getCourierId, getCourierName, clearCourier } from "../lib/storage"
 import { supabase } from "../lib/supabase"
 import { Order } from "../types/order"
@@ -31,6 +31,7 @@ export default function Index() {
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [loggingOut, setLoggingOut] = useState(false)
+  const [takingOrderId, setTakingOrderId] = useState<string | null>(null)
 
   useEffect(() => {
     let channel: ReturnType<typeof supabase.channel> | null = null
@@ -135,6 +136,33 @@ export default function Index() {
     }
   }
 
+  async function handleTakeOrder(orderId: string) {
+    try {
+      setTakingOrderId(orderId)
+
+      await assignOrder(orderId)
+      await loadOrders(false)
+
+      Alert.alert("Готово", "Заказ взят")
+    } catch (error) {
+      console.error("Take order error:", error)
+
+      const message =
+        error instanceof Error ? error.message : "Не удалось взять заказ"
+
+      if (message === "Order already taken") {
+        Alert.alert("Заказ уже занят", "Этот заказ уже взял другой курьер")
+      } else if (message === "Courier not logged in") {
+        Alert.alert("Ошибка", "Сессия курьера истекла, войдите заново")
+        router.replace("/login")
+      } else {
+        Alert.alert("Ошибка", message)
+      }
+    } finally {
+      setTakingOrderId(null)
+    }
+  }
+
   const sections = useMemo<OrderSection[]>(() => {
     const newOrders = orders.filter((order) => order.status === "new")
     const myOrders = orders.filter(
@@ -174,31 +202,33 @@ export default function Index() {
 
   if (loading) {
     return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" />
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#111827" />
       </View>
     )
   }
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.title}>Заказы</Text>
-          {!!courierName && (
-            <Text style={styles.subtitle}>Курьер: {courierName}</Text>
-          )}
-        </View>
+      <View style={styles.headerCard}>
+        <View style={styles.headerTopRow}>
+          <View style={styles.headerTextBlock}>
+            <Text style={styles.title}>Заказы</Text>
+            {!!courierName && (
+              <Text style={styles.subtitle}>Курьер: {courierName}</Text>
+            )}
+          </View>
 
-        <TouchableOpacity
-          style={[styles.logoutButton, loggingOut && styles.logoutButtonDisabled]}
-          onPress={handleLogoutPress}
-          disabled={loggingOut}
-        >
-          <Text style={styles.logoutButtonText}>
-            {loggingOut ? "Выход..." : "Сменить курьера"}
-          </Text>
-        </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.logoutButton, loggingOut && styles.buttonDisabled]}
+            onPress={handleLogoutPress}
+            disabled={loggingOut}
+          >
+            <Text style={styles.logoutButtonText}>
+              {loggingOut ? "Выход..." : "Сменить курьера"}
+            </Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       <SectionList
@@ -217,26 +247,54 @@ export default function Index() {
             </View>
           </View>
         )}
-        renderItem={({ item }) => (
-          <TouchableOpacity
-            style={styles.card}
-            onPress={() => openOrder(item.id)}
-          >
-            <Text style={styles.address}>{item.address}</Text>
+        renderItem={({ item }) => {
+          const isNew = item.status === "new"
+          const isTakingThisOrder = takingOrderId === item.id
 
-            <Text style={styles.info}>
-              {item.package_label} • {item.total} ₽
-            </Text>
+          return (
+            <TouchableOpacity
+              style={styles.card}
+              onPress={() => openOrder(item.id)}
+              activeOpacity={0.9}
+            >
+              <Text style={styles.address}>{item.address}</Text>
 
-            <Text style={styles.status}>
-              Статус: {getStatusLabel(item.status)}
-            </Text>
+              <Text style={styles.info}>
+                {item.package_label} • {item.total} ₽
+              </Text>
 
-            {item.phone ? (
-              <Text style={styles.meta}>Телефон: {item.phone}</Text>
-            ) : null}
-          </TouchableOpacity>
-        )}
+              <Text style={styles.status}>
+                Статус: {getStatusLabel(item.status)}
+              </Text>
+
+              {item.phone ? (
+                <Text style={styles.meta}>Телефон: {item.phone}</Text>
+              ) : null}
+
+              {isNew ? (
+                <TouchableOpacity
+                  style={[
+                    styles.takeButton,
+                    isTakingThisOrder && styles.buttonDisabled
+                  ]}
+                  onPress={() => handleTakeOrder(item.id)}
+                  disabled={isTakingThisOrder}
+                >
+                  <Text style={styles.takeButtonText}>
+                    {isTakingThisOrder ? "Берём..." : "Взять заказ"}
+                  </Text>
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity
+                  style={styles.openButton}
+                  onPress={() => openOrder(item.id)}
+                >
+                  <Text style={styles.openButtonText}>Открыть заказ</Text>
+                </TouchableOpacity>
+              )}
+            </TouchableOpacity>
+          )
+        }}
         renderSectionFooter={({ section }) =>
           section.data.length === 0 ? (
             <View style={styles.emptySection}>
@@ -273,48 +331,57 @@ function getStatusLabel(status: Order["status"]) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: "#f3f4f6",
     paddingHorizontal: 16,
-    paddingTop: 20
+    paddingTop: 16
   },
 
-  center: {
+  loadingContainer: {
     flex: 1,
     justifyContent: "center",
-    alignItems: "center"
+    alignItems: "center",
+    backgroundColor: "#f3f4f6"
   },
 
-  header: {
-    marginBottom: 16,
+  headerCard: {
+    backgroundColor: "#ffffff",
+    borderRadius: 18,
+    padding: 16,
+    marginBottom: 12
+  },
+
+  headerTopRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "flex-start",
     gap: 12
   },
 
+  headerTextBlock: {
+    flex: 1
+  },
+
   title: {
-    fontSize: 28,
-    fontWeight: "700"
+    fontSize: 30,
+    fontWeight: "800",
+    color: "#111827"
   },
 
   subtitle: {
     marginTop: 6,
-    fontSize: 14,
-    color: "#666"
+    fontSize: 15,
+    color: "#4b5563"
   },
 
   logoutButton: {
-    backgroundColor: "#111",
+    backgroundColor: "#111827",
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 12
   },
 
-  logoutButtonDisabled: {
-    opacity: 0.6
-  },
-
   logoutButtonText: {
-    color: "#fff",
+    color: "#ffffff",
     fontSize: 13,
     fontWeight: "700"
   },
@@ -332,69 +399,103 @@ const styles = StyleSheet.create({
   },
 
   sectionTitle: {
-    fontSize: 20,
-    fontWeight: "700"
+    fontSize: 22,
+    fontWeight: "800",
+    color: "#111827"
   },
 
   sectionBadge: {
-    minWidth: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: "#111",
+    minWidth: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: "#111827",
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 8
   },
 
   sectionBadgeText: {
-    color: "#fff",
+    color: "#ffffff",
     fontSize: 12,
-    fontWeight: "700"
+    fontWeight: "800"
   },
 
   card: {
-    backgroundColor: "#f5f5f5",
+    backgroundColor: "#ffffff",
     padding: 16,
-    borderRadius: 14,
+    borderRadius: 18,
     marginBottom: 10
   },
 
   address: {
-    fontSize: 16,
-    fontWeight: "700"
+    fontSize: 18,
+    fontWeight: "800",
+    color: "#111827"
   },
 
   info: {
-    marginTop: 6,
-    fontSize: 14,
-    color: "#333"
+    marginTop: 8,
+    fontSize: 16,
+    color: "#374151"
   },
 
   status: {
-    marginTop: 8,
-    fontSize: 13,
-    color: "#666"
+    marginTop: 10,
+    fontSize: 14,
+    color: "#4b5563"
   },
 
   meta: {
     marginTop: 6,
-    fontSize: 13,
-    color: "#666"
+    fontSize: 14,
+    color: "#4b5563"
+  },
+
+  takeButton: {
+    marginTop: 14,
+    backgroundColor: "#111827",
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: "center"
+  },
+
+  takeButtonText: {
+    color: "#ffffff",
+    fontSize: 15,
+    fontWeight: "800"
+  },
+
+  openButton: {
+    marginTop: 14,
+    backgroundColor: "#e5e7eb",
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: "center"
+  },
+
+  openButtonText: {
+    color: "#111827",
+    fontSize: 15,
+    fontWeight: "800"
   },
 
   emptySection: {
-    backgroundColor: "#f5f5f5",
+    backgroundColor: "#ffffff",
     padding: 14,
-    borderRadius: 12,
+    borderRadius: 14,
     marginBottom: 8
   },
 
   emptySectionText: {
     fontSize: 14,
-    color: "#777"
+    color: "#6b7280"
   },
 
   sectionSpacer: {
-    height: 4
+    height: 6
+  },
+
+  buttonDisabled: {
+    opacity: 0.6
   }
 })

@@ -11,10 +11,12 @@ import {
   SafeAreaView
 } from "react-native"
 import { useRouter } from "expo-router"
+import * as Location from "expo-location"
 
 import { getOrders, assignOrder } from "../lib/orders"
 import { getCourierId, getCourierName, clearCourier } from "../lib/storage"
 import { supabase } from "../lib/supabase"
+import { geocodeAddress } from "../lib/geocode"
 import { Order } from "../types/order"
 
 type OrderSection = {
@@ -23,12 +25,21 @@ type OrderSection = {
   emptyText: string
 }
 
+type CourierCoords = {
+  latitude: number
+  longitude: number
+}
+
+type OrderDistanceMap = Record<string, string>
+
 export default function Index() {
   const router = useRouter()
 
   const [orders, setOrders] = useState<Order[]>([])
   const [courierId, setCourierId] = useState<string | null>(null)
   const [courierName, setCourierName] = useState<string | null>(null)
+  const [courierCoords, setCourierCoords] = useState<CourierCoords | null>(null)
+  const [orderDistances, setOrderDistances] = useState<OrderDistanceMap>({})
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [takingOrderId, setTakingOrderId] = useState<string | null>(null)
@@ -48,6 +59,7 @@ export default function Index() {
       setCourierId(storedCourierId)
       setCourierName(storedCourierName)
 
+      await requestLocation()
       await loadOrders(true)
 
       channel = supabase
@@ -69,24 +81,89 @@ export default function Index() {
     init()
 
     return () => {
-      if (channel) supabase.removeChannel(channel)
+      if (channel) {
+        supabase.removeChannel(channel)
+      }
     }
   }, [])
 
+  useEffect(() => {
+    if (orders.length > 0 && courierCoords) {
+      calculateDistances()
+    }
+  }, [orders, courierCoords])
+
+  async function requestLocation() {
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync()
+
+      if (status !== "granted") {
+        console.log("Location permission denied")
+        return
+      }
+
+      const location = await Location.getCurrentPositionAsync({})
+
+      setCourierCoords({
+        latitude: location.coords.latitude,
+        longitude: location.coords.longitude
+      })
+    } catch (error) {
+      console.error("Location error:", error)
+    }
+  }
+
   async function loadOrders(showLoader = false) {
     try {
-      if (showLoader) setLoading(true)
+      if (showLoader) {
+        setLoading(true)
+      }
 
       const data = await getOrders()
       setOrders(data)
+    } catch (error) {
+      console.error("Load orders error:", error)
     } finally {
-      if (showLoader) setLoading(false)
+      if (showLoader) {
+        setLoading(false)
+      }
       setRefreshing(false)
+    }
+  }
+
+  async function calculateDistances() {
+    if (!courierCoords) return
+
+    try {
+      const pairs = await Promise.all(
+        orders.map(async (order) => {
+          try {
+            const orderCoords = await geocodeAddress(order.address)
+
+            const distanceKm = getDistanceKm(
+              courierCoords.latitude,
+              courierCoords.longitude,
+              orderCoords.latitude,
+              orderCoords.longitude
+            )
+
+            return [order.id, formatDistance(distanceKm)] as const
+          } catch (error) {
+            console.error("Distance calc error:", error)
+            return [order.id, "—"] as const
+          }
+        })
+      )
+
+      setOrderDistances(Object.fromEntries(pairs))
+    } catch (error) {
+      console.error("Calculate distances error:", error)
     }
   }
 
   async function onRefresh() {
     setRefreshing(true)
+    await requestLocation()
     await loadOrders(false)
   }
 
@@ -99,31 +176,52 @@ export default function Index() {
 
       Alert.alert("Заказ взят")
     } catch (error: any) {
-      Alert.alert("Ошибка", error.message || "Не удалось взять заказ")
+      Alert.alert("Ошибка", error?.message || "Не удалось взять заказ")
     } finally {
       setTakingOrderId(null)
     }
   }
 
   const sections = useMemo<OrderSection[]>(() => {
-    const newOrders = orders.filter((o) => o.status === "new")
-    const myOrders = orders.filter(
-      (o) => o.status === "assigned" && o.courier_id === courierId
-    )
-    const onTheWay = orders.filter(
-      (o) => o.status === "on_the_way" && o.courier_id === courierId
-    )
-    const arrived = orders.filter(
-      (o) => o.status === "arrived" && o.courier_id === courierId
-    )
+    const newOrders = orders
+      .filter((o) => o.status === "new")
+      .sort((a, b) => compareDistance(a.id, b.id, orderDistances))
+
+    const myOrders = orders
+      .filter((o) => o.status === "assigned" && o.courier_id === courierId)
+      .sort((a, b) => compareDistance(a.id, b.id, orderDistances))
+
+    const onTheWay = orders
+      .filter((o) => o.status === "on_the_way" && o.courier_id === courierId)
+      .sort((a, b) => compareDistance(a.id, b.id, orderDistances))
+
+    const arrived = orders
+      .filter((o) => o.status === "arrived" && o.courier_id === courierId)
+      .sort((a, b) => compareDistance(a.id, b.id, orderDistances))
 
     return [
-      { title: "Новые заказы", data: newOrders, emptyText: "Нет новых заказов" },
-      { title: "Мои заказы", data: myOrders, emptyText: "Нет назначенных заказов" },
-      { title: "В пути", data: onTheWay, emptyText: "Нет заказов в пути" },
-      { title: "Прибыл", data: arrived, emptyText: "Нет прибывших заказов" }
+      {
+        title: "Новые заказы",
+        data: newOrders,
+        emptyText: "Нет новых заказов"
+      },
+      {
+        title: "Мои заказы",
+        data: myOrders,
+        emptyText: "Нет назначенных заказов"
+      },
+      {
+        title: "В пути",
+        data: onTheWay,
+        emptyText: "Нет заказов в пути"
+      },
+      {
+        title: "Прибыл",
+        data: arrived,
+        emptyText: "Нет прибывших заказов"
+      }
     ]
-  }, [orders, courierId])
+  }, [orders, courierId, orderDistances])
 
   if (loading) {
     return (
@@ -166,6 +264,15 @@ export default function Index() {
             </View>
           </View>
         )}
+        renderSectionFooter={({ section }) =>
+          section.data.length === 0 ? (
+            <View style={styles.emptyBlock}>
+              <Text style={styles.emptyText}>{section.emptyText}</Text>
+            </View>
+          ) : (
+            <View style={styles.sectionSpacer} />
+          )
+        }
         renderItem={({ item }) => (
           <View style={styles.card}>
             <Text style={styles.address}>{item.address}</Text>
@@ -176,10 +283,18 @@ export default function Index() {
 
             <Text style={styles.meta}>Телефон: {item.phone}</Text>
 
+            <Text style={styles.distance}>
+              Расстояние: {orderDistances[item.id] || "считаем..."}
+            </Text>
+
             {item.status === "new" ? (
               <TouchableOpacity
-                style={styles.takeButton}
+                style={[
+                  styles.takeButton,
+                  takingOrderId === item.id && styles.buttonDisabled
+                ]}
                 onPress={() => handleTakeOrder(item.id)}
+                disabled={takingOrderId === item.id}
               >
                 <Text style={styles.takeText}>
                   {takingOrderId === item.id ? "Берём..." : "Взять заказ"}
@@ -197,6 +312,65 @@ export default function Index() {
         )}
       />
     </SafeAreaView>
+  )
+}
+
+function formatDistance(distanceKm: number) {
+  if (distanceKm < 1) {
+    return `${Math.round(distanceKm * 1000)} м`
+  }
+
+  return `${distanceKm.toFixed(1)} км`
+}
+
+function getDistanceKm(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number
+) {
+  const toRad = (value: number) => (value * Math.PI) / 180
+
+  const earthRadiusKm = 6371
+  const dLat = toRad(lat2 - lat1)
+  const dLon = toRad(lon2 - lon1)
+
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) *
+      Math.cos(toRad(lat2)) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2)
+
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+
+  return earthRadiusKm * c
+}
+
+function parseDistanceValue(distance: string | undefined) {
+  if (!distance || distance === "—" || distance === "считаем...") {
+    return Number.MAX_SAFE_INTEGER
+  }
+
+  if (distance.endsWith(" м")) {
+    return Number(distance.replace(" м", "")) / 1000
+  }
+
+  if (distance.endsWith(" км")) {
+    return Number(distance.replace(" км", ""))
+  }
+
+  return Number.MAX_SAFE_INTEGER
+}
+
+function compareDistance(
+  orderIdA: string,
+  orderIdB: string,
+  orderDistances: OrderDistanceMap
+) {
+  return (
+    parseDistanceValue(orderDistances[orderIdA]) -
+    parseDistanceValue(orderDistances[orderIdB])
   )
 }
 
@@ -288,6 +462,12 @@ const styles = StyleSheet.create({
     color: "#6b7280"
   },
 
+  distance: {
+    marginTop: 6,
+    color: "#374151",
+    fontWeight: "600"
+  },
+
   takeButton: {
     marginTop: 12,
     backgroundColor: "#111827",
@@ -311,5 +491,24 @@ const styles = StyleSheet.create({
 
   openText: {
     fontWeight: "700"
+  },
+
+  emptyBlock: {
+    backgroundColor: "#fff",
+    padding: 14,
+    borderRadius: 14,
+    marginBottom: 10
+  },
+
+  emptyText: {
+    color: "#6b7280"
+  },
+
+  sectionSpacer: {
+    height: 6
+  },
+
+  buttonDisabled: {
+    opacity: 0.6
   }
 })

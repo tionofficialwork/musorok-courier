@@ -1,4 +1,4 @@
-import { CURRENT_COURIER_ID } from "./courier";
+import { getCourierId() } from "./courier";
 import { supabase } from "./supabase";
 import { Order, OrderStatus } from "../types/order";
 
